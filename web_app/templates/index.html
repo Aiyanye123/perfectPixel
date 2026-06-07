@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2efe7">
+  <title>PerfectPixel Studio</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <div>
+          <strong>PerfectPixel</strong>
+          <span>像素修复工作台</span>
+        </div>
+      </div>
+      <div class="mast-actions">
+        <span class="local-badge"><span></span>本地离线处理</span>
+        <a href="https://github.com/theamusing/perfectPixel" target="_blank" rel="noreferrer">项目源码</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="workspace">
+        <aside class="control-rail">
+          <div class="section-label"><span>01</span>输入与参数</div>
+          <div class="dropzone" id="dropzone" tabindex="0">
+            <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" multiple>
+            <input id="folder-input" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" webkitdirectory directory multiple>
+            <span class="drop-icon" aria-hidden="true">+</span>
+            <strong>拖入图片，或选择导入方式</strong>
+            <small>单张最大 20 MB，批量最多 200 张</small>
+            <span class="input-actions">
+              <button id="choose-files" type="button">选择图片</button>
+              <button id="choose-folder" type="button">选择文件夹</button>
+            </span>
+          </div>
+
+          <div class="file-row hidden" id="file-row">
+            <img id="file-thumb" alt="">
+            <div><strong id="file-name"></strong><small id="file-meta"></small></div>
+            <button id="remove-file" type="button" aria-label="移除图片">×</button>
+          </div>
+
+          <div class="field">
+            <label for="sample-method">颜色采样</label>
+            <select id="sample-method">
+              <option value="center">中心采样 · 最锐利</option>
+              <option value="median">中位数 · 更稳定</option>
+              <option value="majority">主色聚类 · 抗噪点</option>
+            </select>
+            <p id="sample-hint">取每个网格中心点颜色，适合边界清晰的图片。</p>
+          </div>
+
+          <div class="field">
+            <div class="label-line"><label>网格检测</label><span id="grid-mode-label">自动</span></div>
+            <label class="switch-row">
+              <span>自动识别网格尺寸</span>
+              <input id="auto-grid" type="checkbox" checked><i></i>
+            </label>
+            <div class="grid-pair hidden" id="manual-grid">
+              <label>宽<input id="grid-width" type="number" min="2" max="512" value="32"></label>
+              <span>×</span>
+              <label>高<input id="grid-height" type="number" min="2" max="512" value="32"></label>
+            </div>
+          </div>
+
+          <details class="advanced">
+            <summary>高级检测参数 <span>展开</span></summary>
+            <div class="advanced-body">
+              <div class="field compact">
+                <label for="backend">处理后端</label>
+                <select id="backend">
+                  <option value="auto">自动 · 推荐</option>
+                  <option value="opencv">OpenCV · 高性能</option>
+                  <option value="numpy">NumPy · 轻量</option>
+                </select>
+              </div>
+              <div class="range-field">
+                <div><label for="refine">网格微调强度</label><output id="refine-value">0.25</output></div>
+                <input id="refine" type="range" min="0" max="0.5" step="0.05" value="0.25">
+              </div>
+              <div class="split-fields">
+                <label>最小像素尺寸<input id="min-size" type="number" min="1" max="32" step="0.5" value="4"></label>
+                <label>峰值宽度<input id="peak-width" type="number" min="2" max="24" value="6"></label>
+              </div>
+              <label class="check-row"><input id="fix-square" type="checkbox" checked><span>自动修正接近正方形的结果</span></label>
+            </div>
+          </details>
+
+          <button class="process-button" id="process-button" type="button" disabled>
+            <span>开始像素修复</span><i>→</i>
+          </button>
+          <p class="error-message hidden" id="error-message" role="alert"></p>
+        </aside>
+
+        <section class="stage">
+          <div class="stage-head">
+            <div class="section-label"><span>02</span>预览与导出</div>
+            <div class="view-tabs" role="tablist">
+              <button class="active" data-view="original" type="button">原图</button>
+              <button data-view="overlay" type="button" disabled>网格</button>
+              <button data-view="result" type="button" disabled>结果</button>
+            </div>
+          </div>
+
+          <div class="canvas-wrap checkerboard" id="canvas-wrap">
+            <div class="empty-state" id="empty-state">
+              <span class="empty-pixels"><i></i><i></i><i></i><i></i><i></i></span>
+              <strong>等待像素风图片</strong>
+              <p>可导入单张图片，也可选择整个文件夹批量修复。</p>
+            </div>
+            <img class="hidden" id="preview-image" alt="图片预览">
+            <div class="loading hidden" id="loading"><span></span><strong>正在识别网格</strong><small>FFT 检测与边缘微调进行中...</small></div>
+            <div class="batch-status hidden" id="batch-status">
+              <strong id="batch-title">批量处理完成</strong>
+              <p id="batch-summary"></p>
+              <small>压缩包内包含修复后的 PNG 与处理报告。</small>
+            </div>
+          </div>
+
+          <div class="export-bar">
+            <div class="export-scale">
+              <div><label for="export-scale">导出倍率</label><output id="scale-value">8×</output></div>
+              <input id="export-scale" type="range" min="1" max="16" value="8">
+              <small>仅放大下载尺寸，不改变像素内容；使用最近邻缩放，保持边缘锐利。</small>
+            </div>
+            <button id="download-button" type="button" disabled>下载 PNG <span>↓</span></button>
+          </div>
+        </section>
+      </section>
+
+      <section class="diagnostics">
+        <div class="diagnostics-head">
+          <div><p class="eyebrow">ANALYSIS / 03</p><h2>网格诊断</h2></div>
+          <p id="diagnostic-summary">处理图片后，这里会展示网格检测结果与运行信息。</p>
+        </div>
+        <div class="metrics">
+          <article><span>输入尺寸</span><strong id="metric-input">—</strong><small>原始图像</small></article>
+          <article><span>检测网格</span><strong id="metric-grid">—</strong><small id="metric-cell">自动识别</small></article>
+          <article><span>输出尺寸</span><strong id="metric-output">—</strong><small>真实像素画</small></article>
+          <article><span>处理耗时</span><strong id="metric-time">—</strong><small id="metric-backend">等待处理</small></article>
+        </div>
+      </section>
+    </main>
+    <footer><span>PerfectPixel Studio · Local Edition</span><span>图片不会离开此设备</span></footer>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

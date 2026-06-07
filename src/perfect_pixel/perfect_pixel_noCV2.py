@@ -326,7 +326,7 @@ def estimate_grid_fft(gray, peak_width=6):
     scale_col = detect_peak(col_sum, peak_width=peak_width)
 
     if scale_row is None or scale_col is None or scale_col <= 0:
-        return None
+        return None, None
 
     return scale_col, scale_row
 

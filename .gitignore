@@ -2,12 +2,16 @@
 build/
 dist/
 *.egg-info/
+__pycache__/
+*.py[cod]
 
 venv/
 .venv/
 env/
 
 output/
+portable/
+.web-server.pid
 
 *.log
 

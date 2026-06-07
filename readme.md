@@ -88,6 +88,34 @@ The grid size is automatically detected, and the image is refined.
 
 Try integrate it into your own projects!
 
+## Local Web App
+
+This repository includes a local browser interface with advanced grid controls,
+diagnostics, previews, PNG export, and folder-based batch processing with ZIP
+export. Images are processed locally and are not uploaded to an external
+service.
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[web]"
+python run_web.py
+```
+
+The browser opens automatically. Close the terminal window to stop the app.
+
+### Windows Portable Build
+
+Install the build dependency and run the packaging script:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[web,build]"
+.\build_portable.ps1
+```
+
+The shareable executable is generated at
+`portable\PerfectPixel-Web.exe`. The recipient does not need Python installed.
+
 ## API Reference
 | Args | Description | 
 | :--- | :--- |

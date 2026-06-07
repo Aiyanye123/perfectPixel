@@ -1,0 +1,232 @@
+const $ = (id) => document.getElementById(id);
+const state = {
+  files: [], original: "", overlay: "", result: "", batchZip: "", activeView: "original"
+};
+
+const hints = {
+  center: "取每个网格中心点颜色，适合边界清晰的图片。",
+  median: "取网格内颜色中位数，能够减少轻微噪点和渐变影响。",
+  majority: "聚类后选择主色，适合有压缩噪点或复杂边缘的图片。"
+};
+
+function validImages(files) {
+  return [...files].filter((file) => file.type.startsWith("image/"));
+}
+
+function setFiles(files) {
+  const images = validImages(files);
+  if (!images.length) return showError("没有找到可处理的图片。");
+  if (images.length > 200) return showError("单次最多处理 200 张图片。");
+  clearObjectUrls();
+  state.files = images;
+  state.original = URL.createObjectURL(images[0]);
+  state.overlay = ""; state.result = ""; state.batchZip = "";
+
+  $("file-thumb").src = state.original;
+  $("file-name").textContent = images.length === 1 ? images[0].name : `已选择 ${images.length} 张图片`;
+  const totalMb = images.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024;
+  $("file-meta").textContent = images.length === 1
+    ? `${totalMb.toFixed(2)} MB`
+    : `${images[0].webkitRelativePath?.split("/")[0] || "批量图片"} · 共 ${totalMb.toFixed(2)} MB`;
+  $("file-row").classList.remove("hidden");
+  $("process-button").disabled = false;
+  $("process-button").querySelector("span").textContent = images.length === 1 ? "开始像素修复" : `批量修复 ${images.length} 张图片`;
+  $("download-button").textContent = images.length === 1 ? "下载 PNG ↓" : "下载 ZIP ↓";
+  $("download-button").disabled = true;
+  $("batch-status").classList.add("hidden");
+  resetResultViews();
+  showView("original");
+  resetDiagnostics();
+  hideError();
+}
+
+function clearObjectUrls() {
+  [state.original, state.batchZip].forEach((url) => { if (url) URL.revokeObjectURL(url); });
+}
+
+function clearFiles() {
+  clearObjectUrls();
+  state.files = []; state.original = ""; state.overlay = ""; state.result = ""; state.batchZip = "";
+  $("file-input").value = ""; $("folder-input").value = "";
+  $("file-row").classList.add("hidden");
+  $("process-button").disabled = true;
+  $("process-button").querySelector("span").textContent = "开始像素修复";
+  $("download-button").disabled = true;
+  $("download-button").textContent = "下载 PNG ↓";
+  $("preview-image").classList.add("hidden");
+  $("batch-status").classList.add("hidden");
+  $("empty-state").classList.remove("hidden");
+  resetResultViews();
+  resetDiagnostics();
+}
+
+function resetResultViews() {
+  document.querySelectorAll(".view-tabs button").forEach((button, index) => {
+    if (index > 0) button.disabled = true;
+  });
+}
+
+function showView(view) {
+  state.activeView = view;
+  document.querySelectorAll(".view-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
+  const source = state[view];
+  if (source) {
+    $("preview-image").src = source;
+    $("preview-image").classList.remove("hidden");
+    $("empty-state").classList.add("hidden");
+    $("batch-status").classList.add("hidden");
+  }
+}
+
+function appendOptions(form) {
+  form.append("sample_method", $("sample-method").value);
+  form.append("backend", $("backend").value);
+  form.append("auto_grid", $("auto-grid").checked);
+  form.append("grid_width", $("grid-width").value);
+  form.append("grid_height", $("grid-height").value);
+  form.append("refine_intensity", $("refine").value);
+  form.append("min_size", $("min-size").value);
+  form.append("peak_width", $("peak-width").value);
+  form.append("fix_square", $("fix-square").checked);
+}
+
+async function processImages() {
+  if (!state.files.length) return;
+  setProcessing(true);
+  const isBatch = state.files.length > 1;
+  try {
+    if (isBatch) await processBatch();
+    else await processSingle();
+  } catch (error) {
+    showError(error.message);
+    showView("original");
+  } finally {
+    setProcessing(false);
+  }
+}
+
+async function processSingle() {
+  const form = new FormData();
+  form.append("image", state.files[0]);
+  appendOptions(form);
+  const response = await fetch("/api/process", { method: "POST", body: form });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "处理失败。");
+  state.overlay = data.overlay; state.result = data.result;
+  document.querySelector('[data-view="overlay"]').disabled = false;
+  document.querySelector('[data-view="result"]').disabled = false;
+  $("download-button").disabled = false;
+  updateDiagnostics(data.diagnostics);
+  showView("result");
+}
+
+async function processBatch() {
+  const form = new FormData();
+  state.files.forEach((file) => form.append("images", file, file.webkitRelativePath || file.name));
+  form.append("export_scale", $("export-scale").value);
+  appendOptions(form);
+  const response = await fetch("/api/process-batch", { method: "POST", body: form });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || "批量处理失败。");
+  }
+  const zip = await response.blob();
+  if (state.batchZip) URL.revokeObjectURL(state.batchZip);
+  state.batchZip = URL.createObjectURL(zip);
+  const total = Number(response.headers.get("X-Batch-Total"));
+  const success = Number(response.headers.get("X-Batch-Success"));
+  const failed = Number(response.headers.get("X-Batch-Failed"));
+  const elapsed = Number(response.headers.get("X-Batch-Elapsed-Ms"));
+  $("preview-image").classList.add("hidden");
+  $("empty-state").classList.add("hidden");
+  $("batch-title").textContent = failed ? "批量处理已完成，部分失败" : "批量处理完成";
+  $("batch-summary").textContent = `成功 ${success} 张 · 失败 ${failed} 张 · 共 ${total} 张`;
+  $("batch-status").classList.remove("hidden");
+  $("download-button").disabled = false;
+  updateBatchDiagnostics(total, success, failed, elapsed);
+}
+
+function setProcessing(active) {
+  hideError();
+  $("loading").classList.toggle("hidden", !active);
+  $("preview-image").classList.toggle("hidden", active);
+  $("empty-state").classList.add("hidden");
+  $("batch-status").classList.add("hidden");
+  $("process-button").disabled = active;
+  $("loading").querySelector("strong").textContent = state.files.length > 1 ? `正在批量处理 ${state.files.length} 张图片` : "正在识别网格";
+}
+
+function updateDiagnostics(d) {
+  $("metric-input").textContent = `${d.input_width} × ${d.input_height}`;
+  $("metric-grid").textContent = `${d.detected_grid_width} × ${d.detected_grid_height}`;
+  $("metric-cell").textContent = `单格约 ${d.cell_width} × ${d.cell_height} px`;
+  $("metric-output").textContent = `${d.output_width} × ${d.output_height}`;
+  $("metric-time").textContent = `${d.elapsed_ms} ms`;
+  $("metric-backend").textContent = d.backend;
+  $("diagnostic-summary").textContent = `已通过${d.backend}完成检测，并使用${hints[d.sample_method].split("，")[0]}生成结果。`;
+}
+
+function updateBatchDiagnostics(total, success, failed, elapsed) {
+  $("metric-input").textContent = `${total} 张`;
+  $("metric-grid").textContent = "逐张检测";
+  $("metric-cell").textContent = "每张图片独立识别";
+  $("metric-output").textContent = `${success} 成功`;
+  $("metric-time").textContent = `${elapsed} ms`;
+  $("metric-backend").textContent = failed ? `${failed} 张失败` : "全部成功";
+  $("diagnostic-summary").textContent = `批量修复完成，ZIP 使用 ${$("scale-value").textContent} 导出倍率，并保留文件夹相对目录。`;
+}
+
+function resetDiagnostics() {
+  ["metric-input", "metric-grid", "metric-output", "metric-time"].forEach((id) => $(id).textContent = "—");
+  $("metric-cell").textContent = "自动识别";
+  $("metric-backend").textContent = "等待处理";
+  $("diagnostic-summary").textContent = "处理图片后，这里会展示网格检测结果与运行信息。";
+}
+
+function downloadResult() {
+  if (state.files.length > 1) {
+    if (!state.batchZip) return;
+    triggerDownload(state.batchZip, "perfect-pixel-batch.zip");
+    return;
+  }
+  if (!state.result) return;
+  const image = new Image();
+  image.onload = () => {
+    const scale = Number($("export-scale").value);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth * scale; canvas.height = image.naturalHeight * scale;
+    const context = canvas.getContext("2d");
+    context.imageSmoothingEnabled = false;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    triggerDownload(canvas.toDataURL("image/png"), `perfect-pixel-${image.naturalWidth}x${image.naturalHeight}-${scale}x.png`);
+  };
+  image.src = state.result;
+}
+
+function triggerDownload(url, filename) {
+  const link = document.createElement("a"); link.download = filename; link.href = url; link.click();
+}
+function showError(message) { $("error-message").textContent = message; $("error-message").classList.remove("hidden"); }
+function hideError() { $("error-message").classList.add("hidden"); }
+
+$("choose-files").addEventListener("click", () => $("file-input").click());
+$("choose-folder").addEventListener("click", () => $("folder-input").click());
+$("file-input").addEventListener("change", (event) => setFiles(event.target.files));
+$("folder-input").addEventListener("change", (event) => setFiles(event.target.files));
+$("remove-file").addEventListener("click", clearFiles);
+$("process-button").addEventListener("click", processImages);
+$("download-button").addEventListener("click", downloadResult);
+$("sample-method").addEventListener("change", (event) => $("sample-hint").textContent = hints[event.target.value]);
+$("auto-grid").addEventListener("change", (event) => {
+  $("manual-grid").classList.toggle("hidden", event.target.checked);
+  $("grid-mode-label").textContent = event.target.checked ? "自动" : "手动";
+});
+$("refine").addEventListener("input", (event) => $("refine-value").textContent = Number(event.target.value).toFixed(2));
+$("export-scale").addEventListener("input", (event) => $("scale-value").textContent = `${event.target.value}×`);
+document.querySelectorAll(".view-tabs button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
+
+const dropzone = $("dropzone");
+["dragenter", "dragover"].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.add("dragging"); }));
+["dragleave", "drop"].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); }));
+dropzone.addEventListener("drop", (event) => setFiles(event.dataTransfer.files));
+dropzone.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") $("file-input").click(); });
