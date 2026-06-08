@@ -16,7 +16,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_BATCH_BYTES = 300 * 1024 * 1024
 MAX_BATCH_FILES = 200
-ALLOWED_SAMPLE_METHODS = {"center", "median", "majority"}
+ALLOWED_SAMPLE_METHODS = {"adaptive", "center", "median", "majority"}
 ALLOWED_BACKENDS = {"auto", "opencv", "numpy"}
 
 
@@ -140,7 +140,7 @@ def create_app() -> Flask:
 
 
 def _parse_options(form: Any) -> dict[str, Any]:
-    sample_method = form.get("sample_method", "center")
+    sample_method = form.get("sample_method", "adaptive")
     backend = form.get("backend", "auto")
     if sample_method not in ALLOWED_SAMPLE_METHODS:
         raise ValueError("无效的采样方式。")
@@ -223,16 +223,21 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
 
     backend_name, backend = _load_backend(options["backend"])
     grid_size = options["grid_size"]
+    ranking = None
     if grid_size is None:
-        detected_w, detected_h = backend.detect_grid_scale(
+        ranking = backend.detect_grid_candidates(
             rgb,
             peak_width=options["peak_width"],
             max_ratio=1.5,
             min_size=options["min_size"],
         )
-        if detected_w is None or detected_h is None:
+        best_candidate = ranking["best"]
+        if best_candidate is None:
             raise ValueError("未能自动识别网格。请尝试手动指定网格尺寸。")
-        grid_size = (detected_w, detected_h)
+        grid_size = (
+            best_candidate["grid_width"],
+            best_candidate["grid_height"],
+        )
 
     overlay = None
     if include_overlay:
@@ -268,6 +273,8 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
             "cell_height": round(rgb.shape[0] / grid_size[1], 2),
             "backend": backend_name,
             "sample_method": options["sample_method"],
+            "grid_confidence": ranking["confidence"] if ranking else None,
+            "grid_candidates": ranking["alternatives"] if ranking else [],
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         },
     }

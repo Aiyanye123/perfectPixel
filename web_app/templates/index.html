@@ -48,11 +48,12 @@
           <div class="field">
             <label for="sample-method">颜色采样</label>
             <select id="sample-method">
+              <option value="adaptive">边界感知 · 推荐</option>
               <option value="center">中心采样 · 最锐利</option>
               <option value="median">中位数 · 更稳定</option>
               <option value="majority">主色聚类 · 抗噪点</option>
             </select>
-            <p id="sample-hint">取每个网格中心点颜色，适合边界清晰的图片。</p>
+            <p id="sample-hint">降低格子边缘混色权重，并抑制异常颜色，适合模糊和抗锯齿图片。</p>
           </div>
 
           <div class="field">
@@ -87,7 +88,7 @@
                 <label>最小像素尺寸<input id="min-size" type="number" min="1" max="32" step="0.5" value="4"></label>
                 <label>峰值宽度<input id="peak-width" type="number" min="2" max="24" value="6"></label>
               </div>
-              <label class="check-row"><input id="fix-square" type="checkbox" checked><span>自动修正接近正方形的结果</span></label>
+              <label class="check-row"><input id="fix-square" type="checkbox" checked disabled><span>严格保持所选网格宽高</span></label>
             </div>
           </details>
 
@@ -108,13 +109,22 @@
           </div>
 
           <div class="canvas-wrap checkerboard" id="canvas-wrap">
+            <div class="viewer-tools hidden" id="viewer-tools" aria-label="预览操作">
+              <button id="zoom-out" type="button" aria-label="缩小">−</button>
+              <output id="zoom-value">100%</output>
+              <button id="zoom-in" type="button" aria-label="放大">+</button>
+              <button class="reset-view" id="reset-view" type="button">适应画布</button>
+            </div>
             <div class="empty-state" id="empty-state">
               <span class="empty-pixels"><i></i><i></i><i></i><i></i><i></i></span>
               <strong>等待像素风图片</strong>
               <p>可导入单张图片，也可选择整个文件夹批量修复。</p>
             </div>
-            <img class="hidden" id="preview-image" alt="图片预览">
-            <div class="loading hidden" id="loading"><span></span><strong>正在识别网格</strong><small>FFT 检测与边缘微调进行中...</small></div>
+            <div class="viewport-content hidden" id="viewport-content">
+              <img id="preview-image" alt="图片预览" draggable="false">
+            </div>
+            <small class="viewer-hint hidden" id="viewer-hint">滚轮缩放 · 拖拽移动 · 双击复位</small>
+            <div class="loading hidden" id="loading"><span></span><strong>正在识别网格</strong><small>正在比较候选网格与重渲染结果...</small></div>
             <div class="batch-status hidden" id="batch-status">
               <strong id="batch-title">批量处理完成</strong>
               <p id="batch-summary"></p>
@@ -135,12 +145,34 @@
 
       <section class="diagnostics">
         <div class="diagnostics-head">
-          <div><p class="eyebrow">ANALYSIS / 03</p><h2>网格诊断</h2></div>
-          <p id="diagnostic-summary">处理图片后，这里会展示网格检测结果与运行信息。</p>
+          <div><p class="eyebrow">ANALYSIS / 03</p><h2>检测判断</h2></div>
+          <p id="diagnostic-summary">处理后可查看自动选择、可信度与备选网格。</p>
+        </div>
+        <div class="diagnostic-layout">
+          <article class="decision-panel">
+            <div class="decision-top">
+              <div>
+                <span class="micro-label">当前选择</span>
+                <strong id="metric-grid">—</strong>
+                <small id="metric-cell">等待自动识别</small>
+              </div>
+              <div class="confidence-number">
+                <span>可信度</span>
+                <strong id="metric-confidence">—</strong>
+              </div>
+            </div>
+            <div class="confidence-track" aria-hidden="true"><i id="confidence-bar"></i></div>
+            <p id="confidence-note">系统会比较多个可能网格，再选择能够较好解释原图的结果。</p>
+          </article>
+          <div class="candidate-panel">
+            <div class="candidate-head"><span>候选排序</span><small>点击候选可重新修复</small></div>
+            <div class="candidate-list" id="candidate-list">
+              <div class="candidate-empty">处理图片后显示 Top-3 候选</div>
+            </div>
+          </div>
         </div>
         <div class="metrics">
           <article><span>输入尺寸</span><strong id="metric-input">—</strong><small>原始图像</small></article>
-          <article><span>检测网格</span><strong id="metric-grid">—</strong><small id="metric-cell">自动识别</small></article>
           <article><span>输出尺寸</span><strong id="metric-output">—</strong><small>真实像素画</small></article>
           <article><span>处理耗时</span><strong id="metric-time">—</strong><small id="metric-backend">等待处理</small></article>
         </div>

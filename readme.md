@@ -13,6 +13,9 @@ This tool automatically detects the optimal grid and delivers perfectly aligned,
 
 ## Features
 - Automatically detect grid size from pixel style images.
+- Rank multiple FFT, gradient, harmonic, and common-size grid candidates.
+- Report Top-3 automatic-grid alternatives and an initial confidence estimate.
+- Recover cell colors with optional boundary-aware robust sampling.
 - Refines AI generated pixel style image to perfectly aligned grids.
 - Easy to integrate into your own workflow.
 
@@ -116,16 +119,23 @@ Install the build dependency and run the packaging script:
 The shareable executable is generated at
 `portable\PerfectPixel-Web.exe`. The recipient does not need Python installed.
 
+### Algorithm Roadmap
+
+See [PerfectPixel Next: Pixel Art Inverse Reconstruction Proposal](docs/algorithm-roadmap.md)
+for a research-backed roadmap covering multi-candidate grid detection,
+analysis-by-synthesis, palette optimization, deformable grids, confidence
+estimation, and optional learned models.
+
 ## API Reference
 | Args | Description | 
 | :--- | :--- |
 | **image** | `RGB Image (H * W * 3)` |
-| **sample_method** | `"center", "median" or "majority"` |
+| **sample_method** | `"adaptive", "center", "median" or "majority"` |
 | **grid_size** | `Manually set grid size (grid_w, grid_h) to override auto-detection` |
 | **min_size** | `Minimum pixel size to consider valid` |
 | **peak_width** | `Minimum peak width for peak detection.` |
 | **refine_intensity** | `Intensity for grid line refinement. Recommended range is [0, 0.5]. Given original estimated grid line at x, the refinement will search in [x * (1 - refine_intensity), x * (1 + refine_intensity)].` |
-| **fix_square** | `Whether to enforce output to be square when detected image is almost square.` |
+| **fix_square** | Deprecated compatibility argument. Grid refinement now always preserves the selected grid dimensions. |
 | **debug** | `Whether to show debug plots.` |
 
 | Returns | Description |
@@ -139,9 +149,9 @@ The shareable executable is generated at
 <img src="https://github.com/theamusing/perfectPixel/raw/main/assets/algorithm.png" width="100%" />
 
 The whole algorithm mainly contains 3 steps:
-1. Detect grid size from FFT magnitude of the original image and generate grids.
-2. Detect edges using Sobel and refine the grids by aligning them to edges.
-3. Use the grids to sample the original image and to get the scaled image.
+1. Generate multiple grid candidates from FFT, gradient estimates, harmonics, and common sizes.
+2. Rank candidates using global edge alignment, grid regularity, fast re-rendering error, and a grid-complexity penalty.
+3. Detect edges using Sobel, refine the selected grid, and recover each cell color. The `adaptive` sampler down-weights boundary bleed and color outliers.
 
 ## Star History
 

@@ -1,9 +1,11 @@
 const $ = (id) => document.getElementById(id);
 const state = {
-  files: [], original: "", overlay: "", result: "", batchZip: "", activeView: "original"
+  files: [], original: "", overlay: "", result: "", batchZip: "", activeView: "original",
+  viewer: { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 }
 };
 
 const hints = {
+  adaptive: "降低格子边缘混色权重，并抑制异常颜色，适合模糊和抗锯齿图片。",
   center: "取每个网格中心点颜色，适合边界清晰的图片。",
   median: "取网格内颜色中位数，能够减少轻微噪点和渐变影响。",
   majority: "聚类后选择主色，适合有压缩噪点或复杂边缘的图片。"
@@ -53,7 +55,9 @@ function clearFiles() {
   $("process-button").querySelector("span").textContent = "开始像素修复";
   $("download-button").disabled = true;
   $("download-button").textContent = "下载 PNG ↓";
-  $("preview-image").classList.add("hidden");
+  $("viewport-content").classList.add("hidden");
+  $("viewer-tools").classList.add("hidden");
+  $("viewer-hint").classList.add("hidden");
   $("batch-status").classList.add("hidden");
   $("empty-state").classList.remove("hidden");
   resetResultViews();
@@ -72,9 +76,12 @@ function showView(view) {
   const source = state[view];
   if (source) {
     $("preview-image").src = source;
-    $("preview-image").classList.remove("hidden");
+    $("viewport-content").classList.remove("hidden");
+    $("viewer-tools").classList.remove("hidden");
+    $("viewer-hint").classList.remove("hidden");
     $("empty-state").classList.add("hidden");
     $("batch-status").classList.add("hidden");
+    resetViewer();
   }
 }
 
@@ -137,7 +144,9 @@ async function processBatch() {
   const success = Number(response.headers.get("X-Batch-Success"));
   const failed = Number(response.headers.get("X-Batch-Failed"));
   const elapsed = Number(response.headers.get("X-Batch-Elapsed-Ms"));
-  $("preview-image").classList.add("hidden");
+  $("viewport-content").classList.add("hidden");
+  $("viewer-tools").classList.add("hidden");
+  $("viewer-hint").classList.add("hidden");
   $("empty-state").classList.add("hidden");
   $("batch-title").textContent = failed ? "批量处理已完成，部分失败" : "批量处理完成";
   $("batch-summary").textContent = `成功 ${success} 张 · 失败 ${failed} 张 · 共 ${total} 张`;
@@ -149,7 +158,11 @@ async function processBatch() {
 function setProcessing(active) {
   hideError();
   $("loading").classList.toggle("hidden", !active);
-  $("preview-image").classList.toggle("hidden", active);
+  if (active) {
+    $("viewport-content").classList.add("hidden");
+    $("viewer-tools").classList.add("hidden");
+    $("viewer-hint").classList.add("hidden");
+  }
   $("empty-state").classList.add("hidden");
   $("batch-status").classList.add("hidden");
   $("process-button").disabled = active;
@@ -163,7 +176,49 @@ function updateDiagnostics(d) {
   $("metric-output").textContent = `${d.output_width} × ${d.output_height}`;
   $("metric-time").textContent = `${d.elapsed_ms} ms`;
   $("metric-backend").textContent = d.backend;
-  $("diagnostic-summary").textContent = `已通过${d.backend}完成检测，并使用${hints[d.sample_method].split("，")[0]}生成结果。`;
+  if (d.grid_candidates?.length) {
+    const confidence = Math.round(d.grid_confidence * 100);
+    $("metric-confidence").textContent = `${confidence}%`;
+    $("confidence-bar").style.transform = `scaleX(${confidence / 100})`;
+    $("confidence-note").textContent = confidence >= 70
+      ? "候选之间差异较明确，当前网格较为可靠。"
+      : confidence >= 40
+        ? "存在相近候选，建议查看网格叠加确认边界。"
+        : "自动判断不可靠，请点击更细的候选重新修复。";
+    $("diagnostic-summary").textContent = `已比较 ${d.grid_candidates.length} 个优先候选，并选出当前结果。`;
+    renderCandidates(d.grid_candidates);
+  } else {
+    $("metric-confidence").textContent = "手动";
+    $("confidence-bar").style.transform = "scaleX(1)";
+    $("confidence-note").textContent = "当前结果使用你指定的网格尺寸，没有进行自动候选排序。";
+    $("diagnostic-summary").textContent = `已通过${d.backend}按手动网格完成修复。`;
+    $("candidate-list").innerHTML = '<div class="candidate-empty">手动模式不生成候选排序</div>';
+  }
+}
+
+function renderCandidates(candidates) {
+  $("candidate-list").innerHTML = candidates.map((candidate, index) => {
+    const alignment = Math.round(candidate.boundary_alignment * 100);
+    const detail = Math.round((1 - candidate.detail_loss) * 100);
+    return `<button class="candidate-item${index === 0 ? " selected" : ""}" type="button"
+      data-grid-width="${candidate.grid_width}" data-grid-height="${candidate.grid_height}">
+      <span class="candidate-rank">${index === 0 ? "已采用" : `#${index + 1}`}</span>
+      <strong>${candidate.grid_width} × ${candidate.grid_height}</strong>
+      <div><span>边界 ${alignment}%</span><span>细节 ${detail}%</span></div>
+    </button>`;
+  }).join("");
+}
+
+function useCandidateGrid(button) {
+  const width = button.dataset.gridWidth;
+  const height = button.dataset.gridHeight;
+  if (!width || !height || !state.files.length) return;
+  $("auto-grid").checked = false;
+  $("manual-grid").classList.remove("hidden");
+  $("grid-mode-label").textContent = "手动";
+  $("grid-width").value = width;
+  $("grid-height").value = height;
+  processImages();
 }
 
 function updateBatchDiagnostics(total, success, failed, elapsed) {
@@ -173,14 +228,21 @@ function updateBatchDiagnostics(total, success, failed, elapsed) {
   $("metric-output").textContent = `${success} 成功`;
   $("metric-time").textContent = `${elapsed} ms`;
   $("metric-backend").textContent = failed ? `${failed} 张失败` : "全部成功";
+  $("metric-confidence").textContent = "批量";
+  $("confidence-bar").style.transform = `scaleX(${success / Math.max(total, 1)})`;
+  $("confidence-note").textContent = `成功处理 ${success} 张，失败 ${failed} 张；详细结果见压缩包报告。`;
+  $("candidate-list").innerHTML = '<div class="candidate-empty">批量模式请查看 ZIP 内的处理报告</div>';
   $("diagnostic-summary").textContent = `批量修复完成，ZIP 使用 ${$("scale-value").textContent} 导出倍率，并保留文件夹相对目录。`;
 }
 
 function resetDiagnostics() {
-  ["metric-input", "metric-grid", "metric-output", "metric-time"].forEach((id) => $(id).textContent = "—");
-  $("metric-cell").textContent = "自动识别";
+  ["metric-input", "metric-grid", "metric-output", "metric-time", "metric-confidence"].forEach((id) => $(id).textContent = "—");
+  $("metric-cell").textContent = "等待自动识别";
   $("metric-backend").textContent = "等待处理";
-  $("diagnostic-summary").textContent = "处理图片后，这里会展示网格检测结果与运行信息。";
+  $("confidence-bar").style.transform = "scaleX(0)";
+  $("confidence-note").textContent = "系统会比较多个可能网格，再选择能够较好解释原图的结果。";
+  $("candidate-list").innerHTML = '<div class="candidate-empty">处理图片后显示 Top-3 候选</div>';
+  $("diagnostic-summary").textContent = "处理后可查看自动选择、可信度与备选网格。";
 }
 
 function downloadResult() {
@@ -206,6 +268,57 @@ function downloadResult() {
 function triggerDownload(url, filename) {
   const link = document.createElement("a"); link.download = filename; link.href = url; link.click();
 }
+
+function resetViewer() {
+  state.viewer.scale = 1;
+  state.viewer.x = 0;
+  state.viewer.y = 0;
+  updateViewer();
+}
+
+function setViewerScale(nextScale, clientX, clientY) {
+  const canvas = $("canvas-wrap");
+  const rect = canvas.getBoundingClientRect();
+  const oldScale = state.viewer.scale;
+  const scale = Math.min(24, Math.max(0.25, nextScale));
+  const anchorX = clientX === undefined ? 0 : clientX - rect.left - rect.width / 2;
+  const anchorY = clientY === undefined ? 0 : clientY - rect.top - rect.height / 2;
+  state.viewer.x = anchorX - (anchorX - state.viewer.x) * (scale / oldScale);
+  state.viewer.y = anchorY - (anchorY - state.viewer.y) * (scale / oldScale);
+  state.viewer.scale = scale;
+  updateViewer();
+}
+
+function updateViewer() {
+  const { scale, x, y } = state.viewer;
+  $("viewport-content").style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  $("zoom-value").textContent = `${Math.round(scale * 100)}%`;
+}
+
+function startViewerDrag(event) {
+  if ($("viewport-content").classList.contains("hidden") || event.button !== 0 || event.target.closest(".viewer-tools")) return;
+  event.preventDefault();
+  state.viewer.dragging = true;
+  state.viewer.startX = event.clientX - state.viewer.x;
+  state.viewer.startY = event.clientY - state.viewer.y;
+  $("canvas-wrap").classList.add("dragging-view");
+  $("canvas-wrap").setPointerCapture(event.pointerId);
+}
+
+function moveViewer(event) {
+  if (!state.viewer.dragging) return;
+  state.viewer.x = event.clientX - state.viewer.startX;
+  state.viewer.y = event.clientY - state.viewer.startY;
+  updateViewer();
+}
+
+function stopViewerDrag(event) {
+  if (!state.viewer.dragging) return;
+  state.viewer.dragging = false;
+  $("canvas-wrap").classList.remove("dragging-view");
+  if ($("canvas-wrap").hasPointerCapture(event.pointerId)) $("canvas-wrap").releasePointerCapture(event.pointerId);
+}
+
 function showError(message) { $("error-message").textContent = message; $("error-message").classList.remove("hidden"); }
 function hideError() { $("error-message").classList.add("hidden"); }
 
@@ -224,6 +337,23 @@ $("auto-grid").addEventListener("change", (event) => {
 $("refine").addEventListener("input", (event) => $("refine-value").textContent = Number(event.target.value).toFixed(2));
 $("export-scale").addEventListener("input", (event) => $("scale-value").textContent = `${event.target.value}×`);
 document.querySelectorAll(".view-tabs button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
+$("zoom-out").addEventListener("click", () => setViewerScale(state.viewer.scale / 1.25));
+$("zoom-in").addEventListener("click", () => setViewerScale(state.viewer.scale * 1.25));
+$("reset-view").addEventListener("click", resetViewer);
+$("canvas-wrap").addEventListener("wheel", (event) => {
+  if ($("viewport-content").classList.contains("hidden")) return;
+  event.preventDefault();
+  setViewerScale(state.viewer.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12), event.clientX, event.clientY);
+}, { passive: false });
+$("canvas-wrap").addEventListener("pointerdown", startViewerDrag);
+$("canvas-wrap").addEventListener("pointermove", moveViewer);
+$("canvas-wrap").addEventListener("pointerup", stopViewerDrag);
+$("canvas-wrap").addEventListener("pointercancel", stopViewerDrag);
+$("canvas-wrap").addEventListener("dblclick", resetViewer);
+$("candidate-list").addEventListener("click", (event) => {
+  const candidate = event.target.closest(".candidate-item");
+  if (candidate) useCandidateGrid(candidate);
+});
 
 const dropzone = $("dropzone");
 ["dragenter", "dragover"].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.add("dragging"); }));

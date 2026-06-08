@@ -35,6 +35,8 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["result"].startswith("data:image/png;base64,"))
         self.assertEqual(response.json["diagnostics"]["output_width"], 24)
+        self.assertLessEqual(len(response.json["diagnostics"]["grid_candidates"]), 3)
+        self.assertIsNotNone(response.json["diagnostics"]["grid_confidence"])
 
     def test_process_image_with_numpy_backend(self):
         image_path = Path(__file__).parents[1] / "images" / "avatar.png"
@@ -53,6 +55,27 @@ class WebAppTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["diagnostics"]["backend"], "NumPy 轻量后端")
+        self.assertEqual(response.json["diagnostics"]["grid_candidates"], [])
+        self.assertIsNone(response.json["diagnostics"]["grid_confidence"])
+
+    def test_process_image_with_adaptive_sampling(self):
+        image_path = Path(__file__).parents[1] / "images" / "girl.jpg"
+        with image_path.open("rb") as image:
+            response = self.client.post(
+                "/api/process",
+                data={
+                    "image": (image, "girl.jpg"),
+                    "sample_method": "adaptive",
+                    "backend": "auto",
+                    "auto_grid": "false",
+                    "grid_width": "24",
+                    "grid_height": "24",
+                },
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["diagnostics"]["sample_method"], "adaptive")
 
     def test_process_batch_returns_zip_and_report(self):
         root = Path(__file__).parents[1]
