@@ -16,6 +16,7 @@ This tool automatically detects the optimal grid and delivers perfectly aligned,
 - Rank multiple FFT, gradient, harmonic, and common-size grid candidates.
 - Report Top-3 automatic-grid alternatives and an initial confidence estimate.
 - Recover cell colors with optional boundary-aware robust sampling.
+- Preserve transparent PNG input and alpha transparency in single and batch exports.
 - Refines AI generated pixel style image to perfectly aligned grids.
 - Easy to integrate into your own workflow.
 
@@ -37,6 +38,13 @@ pip install perfect-pixel[opencv]
 
 # Numpy version: Lightweight (NumPy only)
 pip install perfect-pixel
+```
+
+To install everything required by this repository, including the local Web app
+and Windows portable build tools:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ## ComfyUI
@@ -100,8 +108,9 @@ service.
 
 ```powershell
 # Windows PowerShell
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[web]"
+pip install -r requirements.txt
 python run_web.py
 ```
 
@@ -112,19 +121,12 @@ The browser opens automatically. Close the terminal window to stop the app.
 Install the build dependency and run the packaging script:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[web,build]"
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\build_portable.ps1
 ```
 
 The shareable executable is generated at
 `portable\PerfectPixel-Web.exe`. The recipient does not need Python installed.
-
-### Algorithm Roadmap
-
-See [PerfectPixel Next: Pixel Art Inverse Reconstruction Proposal](docs/algorithm-roadmap.md)
-for a research-backed roadmap covering multi-candidate grid detection,
-analysis-by-synthesis, palette optimization, deformable grids, confidence
-estimation, and optional learned models.
 
 ## API Reference
 | Args | Description | 

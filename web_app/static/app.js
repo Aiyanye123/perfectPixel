@@ -175,7 +175,7 @@ function updateDiagnostics(d) {
   $("metric-cell").textContent = `单格约 ${d.cell_width} × ${d.cell_height} px`;
   $("metric-output").textContent = `${d.output_width} × ${d.output_height}`;
   $("metric-time").textContent = `${d.elapsed_ms} ms`;
-  $("metric-backend").textContent = d.backend;
+  $("metric-backend").textContent = d.has_alpha ? `${d.backend} · 保留透明` : d.backend;
   if (d.grid_candidates?.length) {
     const confidence = Math.round(d.grid_confidence * 100);
     $("metric-confidence").textContent = `${confidence}%`;

@@ -12,6 +12,7 @@ env/
 output/
 portable/
 .web-server.pid
+docs/
 
 *.log
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 import io
 import json
 import unittest
@@ -77,6 +78,30 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["diagnostics"]["sample_method"], "adaptive")
 
+    def test_transparent_png_preserves_alpha(self):
+        transparent_png = self._transparent_png()
+
+        response = self.client.post(
+            "/api/process",
+            data={
+                "image": (io.BytesIO(transparent_png), "transparent.png"),
+                "sample_method": "adaptive",
+                "backend": "auto",
+                "auto_grid": "false",
+                "grid_width": "16",
+                "grid_height": "16",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = base64.b64decode(response.json["result"].split(",", 1)[1])
+        output = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        self.assertEqual(output.shape[2], 4)
+        self.assertEqual(int(output[..., 3].min()), 0)
+        self.assertEqual(int(output[..., 3].max()), 255)
+        self.assertTrue(response.json["diagnostics"]["has_alpha"])
+
     def test_process_batch_returns_zip_and_report(self):
         root = Path(__file__).parents[1]
         files = []
@@ -112,6 +137,40 @@ class WebAppTests(unittest.TestCase):
             report = json.loads(archive.read("perfect-pixel-report.json"))
             self.assertEqual(report["export_scale"], 2)
             self.assertEqual(report["failed"], 0)
+
+    def test_batch_transparent_png_preserves_alpha(self):
+        response = self.client.post(
+            "/api/process-batch",
+            data={
+                "images": [(io.BytesIO(self._transparent_png()), "transparent.png")],
+                "sample_method": "adaptive",
+                "backend": "auto",
+                "auto_grid": "false",
+                "grid_width": "16",
+                "grid_height": "16",
+                "export_scale": "2",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            output = cv2.imdecode(
+                np.frombuffer(archive.read("results/transparent_perfect.png"), dtype=np.uint8),
+                cv2.IMREAD_UNCHANGED,
+            )
+            self.assertEqual(output.shape, (32, 32, 4))
+            self.assertEqual(int(output[..., 3].min()), 0)
+
+    @staticmethod
+    def _transparent_png():
+        rgba = np.zeros((64, 64, 4), dtype=np.uint8)
+        rgba[16:48, 16:48, :3] = (40, 90, 220)
+        rgba[16:48, 16:48, 3] = 255
+        bgra = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
+        success, encoded = cv2.imencode(".png", bgra)
+        assert success
+        return encoded.tobytes()
 
 
 if __name__ == "__main__":

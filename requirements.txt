@@ -1,0 +1,13 @@
+# Core image processing
+numpy>=1.20.0
+opencv-python
+
+# Local Web app
+flask>=3.1
+waitress>=3.0
+
+# Windows portable build
+pyinstaller>=6.0
+
+# Install this repository as an editable package
+-e .

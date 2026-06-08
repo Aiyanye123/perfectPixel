@@ -213,11 +213,12 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
     if len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError("单张图片不能超过 20 MB。")
 
-    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError("无法识别图片格式，请使用 PNG、JPEG、WEBP 或 BMP。")
 
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    rgb, alpha = _decode_color_and_alpha(image)
+    analysis_rgb = _composite_for_analysis(rgb, alpha)
     if max(rgb.shape[:2]) > 4096:
         raise ValueError("图片边长不能超过 4096 像素。")
 
@@ -226,7 +227,7 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
     ranking = None
     if grid_size is None:
         ranking = backend.detect_grid_candidates(
-            rgb,
+            analysis_rgb,
             peak_width=options["peak_width"],
             max_ratio=1.5,
             min_size=options["min_size"],
@@ -239,25 +240,23 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
             best_candidate["grid_height"],
         )
 
+    x_coords, y_coords = backend.refine_grids(
+        analysis_rgb, grid_size[0], grid_size[1], options["refine_intensity"]
+    )
+    output_rgb = _sample_grid(backend, rgb, x_coords, y_coords, options["sample_method"])
+    output = output_rgb
+    if alpha is not None:
+        output_alpha = _sample_grid(backend, alpha, x_coords, y_coords, "adaptive")
+        output = np.dstack((output_rgb, output_alpha))
+    height, width = output.shape[:2]
+
     overlay = None
     if include_overlay:
-        x_coords, y_coords = backend.refine_grids(
-            rgb, grid_size[0], grid_size[1], options["refine_intensity"]
+        overlay = _draw_grid_overlay(
+            np.dstack((rgb, alpha)) if alpha is not None else rgb,
+            x_coords,
+            y_coords,
         )
-        overlay = _draw_grid_overlay(rgb, x_coords, y_coords)
-
-    width, height, output = backend.get_perfect_pixel(
-        rgb,
-        sample_method=options["sample_method"],
-        grid_size=grid_size,
-        min_size=options["min_size"],
-        peak_width=options["peak_width"],
-        refine_intensity=options["refine_intensity"],
-        fix_square=options["fix_square"],
-        debug=False,
-    )
-    if width is None or height is None:
-        raise ValueError("处理失败，请调整检测参数后重试。")
 
     return {
         "output": output,
@@ -273,11 +272,45 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
             "cell_height": round(rgb.shape[0] / grid_size[1], 2),
             "backend": backend_name,
             "sample_method": options["sample_method"],
+            "has_alpha": alpha is not None,
             "grid_confidence": ranking["confidence"] if ranking else None,
             "grid_candidates": ranking["alternatives"] if ranking else [],
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         },
     }
+
+
+def _decode_color_and_alpha(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+    if image.ndim == 2:
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB), None
+    if image.shape[2] == 2:
+        rgb = cv2.cvtColor(image[..., 0], cv2.COLOR_GRAY2RGB)
+        return rgb, image[..., 1]
+    if image.shape[2] == 4:
+        rgba = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+        return rgba[..., :3], rgba[..., 3]
+    if image.shape[2] == 1:
+        return cv2.cvtColor(image[..., 0], cv2.COLOR_GRAY2RGB), None
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), None
+
+
+def _composite_for_analysis(rgb: np.ndarray, alpha: np.ndarray | None) -> np.ndarray:
+    if alpha is None:
+        return rgb
+    opacity = alpha.astype(np.float32)[..., None] / 255.0
+    composite = rgb.astype(np.float32) * opacity + 255.0 * (1.0 - opacity)
+    return np.clip(np.rint(composite), 0, 255).astype(np.uint8)
+
+
+def _sample_grid(backend: Any, image: np.ndarray, x_coords, y_coords, method: str) -> np.ndarray:
+    if method == "adaptive":
+        return backend.sample_adaptive(image, x_coords, y_coords)
+    if method == "majority":
+        return backend.sample_majority(image, x_coords, y_coords)
+    if method == "median":
+        sampled = backend.sample_median(image, x_coords, y_coords)
+        return sampled[..., 0] if image.ndim == 2 and sampled.ndim == 3 else sampled
+    return backend.sample_center(image, x_coords, y_coords)
 
 
 def _safe_archive_path(filename: str) -> str:
@@ -300,7 +333,7 @@ def _draw_grid_overlay(
     image: np.ndarray, x_coords: list[int], y_coords: list[int]
 ) -> np.ndarray:
     overlay = image.copy()
-    color = (43, 226, 181)
+    color = (43, 226, 181, 255) if image.ndim == 3 and image.shape[2] == 4 else (43, 226, 181)
     for x in x_coords:
         cv2.line(overlay, (int(x), 0), (int(x), overlay.shape[0] - 1), color, 1)
     for y in y_coords:
@@ -314,8 +347,13 @@ def _encode_png(image: np.ndarray) -> str:
 
 
 def _png_bytes(image: np.ndarray) -> bytes:
-    bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    success, encoded = cv2.imencode(".png", bgr)
+    if image.ndim == 3 and image.shape[2] == 4:
+        encoded_image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+    elif image.ndim == 3:
+        encoded_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    else:
+        encoded_image = image
+    success, encoded = cv2.imencode(".png", encoded_image)
     if not success:
         raise RuntimeError("PNG encoding failed")
     return encoded.tobytes()
