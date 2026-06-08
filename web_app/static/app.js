@@ -1,14 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   files: [], original: "", overlay: "", result: "", batchZip: "", activeView: "original",
+  sourceSize: null,
   viewer: { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0 }
-};
-
-const hints = {
-  adaptive: "降低格子边缘混色权重，并抑制异常颜色，适合模糊和抗锯齿图片。",
-  center: "取每个网格中心点颜色，适合边界清晰的图片。",
-  median: "取网格内颜色中位数，能够减少轻微噪点和渐变影响。",
-  majority: "聚类后选择主色，适合有压缩噪点或复杂边缘的图片。"
 };
 
 function validImages(files) {
@@ -22,7 +16,9 @@ function setFiles(files) {
   clearObjectUrls();
   state.files = images;
   state.original = URL.createObjectURL(images[0]);
+  state.sourceSize = null;
   state.overlay = ""; state.result = ""; state.batchZip = "";
+  loadSourceSize(state.original);
 
   $("file-thumb").src = state.original;
   $("file-name").textContent = images.length === 1 ? images[0].name : `已选择 ${images.length} 张图片`;
@@ -48,7 +44,7 @@ function clearObjectUrls() {
 
 function clearFiles() {
   clearObjectUrls();
-  state.files = []; state.original = ""; state.overlay = ""; state.result = ""; state.batchZip = "";
+  state.files = []; state.original = ""; state.overlay = ""; state.result = ""; state.batchZip = ""; state.sourceSize = null;
   $("file-input").value = ""; $("folder-input").value = "";
   $("file-row").classList.add("hidden");
   $("process-button").disabled = true;
@@ -57,11 +53,63 @@ function clearFiles() {
   $("download-button").textContent = "下载 PNG ↓";
   $("viewport-content").classList.add("hidden");
   $("viewer-tools").classList.add("hidden");
-  $("viewer-hint").classList.add("hidden");
   $("batch-status").classList.add("hidden");
   $("empty-state").classList.remove("hidden");
   resetResultViews();
   resetDiagnostics();
+  updateManualGridHint();
+}
+
+function loadSourceSize(source) {
+  const image = new Image();
+  image.onload = () => {
+    if (state.original !== source) return;
+    state.sourceSize = { width: image.naturalWidth, height: image.naturalHeight };
+    updateManualGridHint();
+  };
+  image.src = source;
+}
+
+function updateManualGridHint() {
+  if ($("auto-grid").checked) {
+    $("help-grid-status").textContent = "当前使用自动识别。";
+    return false;
+  }
+
+  const gridWidth = Number($("grid-width").value);
+  const gridHeight = Number($("grid-height").value);
+  if (!Number.isInteger(gridWidth) || !Number.isInteger(gridHeight)
+      || gridWidth < 2 || gridHeight < 2 || gridWidth > 4096 || gridHeight > 4096) {
+    $("help-grid-status").textContent = "当前网格无效：宽高必须是 2 到 4096 之间的整数。";
+    return true;
+  }
+  if (gridWidth * gridHeight > 1024 * 1024) {
+    $("help-grid-status").textContent = "当前网格无效：输出超过 1,048,576 个像素。";
+    return true;
+  }
+  if (!state.sourceSize || state.files.length > 1) {
+    $("help-grid-status").textContent = `当前手动网格：${gridWidth} × ${gridHeight}。`;
+    return false;
+  }
+
+  const { width, height } = state.sourceSize;
+  if (gridWidth > width || gridHeight > height) {
+    $("help-grid-status").textContent = `当前网格无效：不能超过原图 ${width} × ${height}。`;
+    return true;
+  }
+
+  const cellWidth = width / gridWidth;
+  const cellHeight = height / gridHeight;
+  const cellRatio = Math.max(cellWidth / cellHeight, cellHeight / cellWidth);
+  const outputRatio = Math.max(gridWidth / gridHeight, gridHeight / gridWidth);
+  if (cellRatio > 1.5) {
+    $("help-grid-status").textContent = `当前单格约 ${cellWidth.toFixed(2)} × ${cellHeight.toFixed(2)} px，比例偏离正方形。`;
+  } else if (outputRatio >= 8) {
+    $("help-grid-status").textContent = `当前将输出 ${gridWidth} × ${gridHeight} 长条图。`;
+  } else {
+    $("help-grid-status").textContent = `当前单格约 ${cellWidth.toFixed(2)} × ${cellHeight.toFixed(2)} px。`;
+  }
+  return false;
 }
 
 function resetResultViews() {
@@ -78,7 +126,6 @@ function showView(view) {
     $("preview-image").src = source;
     $("viewport-content").classList.remove("hidden");
     $("viewer-tools").classList.remove("hidden");
-    $("viewer-hint").classList.remove("hidden");
     $("empty-state").classList.add("hidden");
     $("batch-status").classList.add("hidden");
     resetViewer();
@@ -99,6 +146,7 @@ function appendOptions(form) {
 
 async function processImages() {
   if (!state.files.length) return;
+  if (!$("auto-grid").checked && updateManualGridHint()) return showError("请先修正手动网格尺寸。");
   setProcessing(true);
   const isBatch = state.files.length > 1;
   try {
@@ -146,7 +194,6 @@ async function processBatch() {
   const elapsed = Number(response.headers.get("X-Batch-Elapsed-Ms"));
   $("viewport-content").classList.add("hidden");
   $("viewer-tools").classList.add("hidden");
-  $("viewer-hint").classList.add("hidden");
   $("empty-state").classList.add("hidden");
   $("batch-title").textContent = failed ? "批量处理已完成，部分失败" : "批量处理完成";
   $("batch-summary").textContent = `成功 ${success} 张 · 失败 ${failed} 张 · 共 ${total} 张`;
@@ -161,7 +208,6 @@ function setProcessing(active) {
   if (active) {
     $("viewport-content").classList.add("hidden");
     $("viewer-tools").classList.add("hidden");
-    $("viewer-hint").classList.add("hidden");
   }
   $("empty-state").classList.add("hidden");
   $("batch-status").classList.add("hidden");
@@ -180,19 +226,11 @@ function updateDiagnostics(d) {
     const confidence = Math.round(d.grid_confidence * 100);
     $("metric-confidence").textContent = `${confidence}%`;
     $("confidence-bar").style.transform = `scaleX(${confidence / 100})`;
-    $("confidence-note").textContent = confidence >= 70
-      ? "候选之间差异较明确，当前网格较为可靠。"
-      : confidence >= 40
-        ? "存在相近候选，建议查看网格叠加确认边界。"
-        : "自动判断不可靠，请点击更细的候选重新修复。";
-    $("diagnostic-summary").textContent = `已比较 ${d.grid_candidates.length} 个优先候选，并选出当前结果。`;
     renderCandidates(d.grid_candidates);
   } else {
     $("metric-confidence").textContent = "手动";
     $("confidence-bar").style.transform = "scaleX(1)";
-    $("confidence-note").textContent = "当前结果使用你指定的网格尺寸，没有进行自动候选排序。";
-    $("diagnostic-summary").textContent = `已通过${d.backend}按手动网格完成修复。`;
-    $("candidate-list").innerHTML = '<div class="candidate-empty">手动模式不生成候选排序</div>';
+    $("candidate-list").innerHTML = '<div class="candidate-empty">手动模式</div>';
   }
 }
 
@@ -230,9 +268,7 @@ function updateBatchDiagnostics(total, success, failed, elapsed) {
   $("metric-backend").textContent = failed ? `${failed} 张失败` : "全部成功";
   $("metric-confidence").textContent = "批量";
   $("confidence-bar").style.transform = `scaleX(${success / Math.max(total, 1)})`;
-  $("confidence-note").textContent = `成功处理 ${success} 张，失败 ${failed} 张；详细结果见压缩包报告。`;
-  $("candidate-list").innerHTML = '<div class="candidate-empty">批量模式请查看 ZIP 内的处理报告</div>';
-  $("diagnostic-summary").textContent = `批量修复完成，ZIP 使用 ${$("scale-value").textContent} 导出倍率，并保留文件夹相对目录。`;
+  $("candidate-list").innerHTML = '<div class="candidate-empty">批量模式</div>';
 }
 
 function resetDiagnostics() {
@@ -240,9 +276,17 @@ function resetDiagnostics() {
   $("metric-cell").textContent = "等待自动识别";
   $("metric-backend").textContent = "等待处理";
   $("confidence-bar").style.transform = "scaleX(0)";
-  $("confidence-note").textContent = "系统会比较多个可能网格，再选择能够较好解释原图的结果。";
-  $("candidate-list").innerHTML = '<div class="candidate-empty">处理图片后显示 Top-3 候选</div>';
-  $("diagnostic-summary").textContent = "处理后可查看自动选择、可信度与备选网格。";
+  $("candidate-list").innerHTML = '<div class="candidate-empty">—</div>';
+}
+
+function toggleHelp(force) {
+  const layer = $("help-layer");
+  const shouldOpen = force === undefined ? layer.classList.contains("hidden") : force;
+  if (shouldOpen) updateManualGridHint();
+  layer.classList.toggle("hidden", !shouldOpen);
+  document.body.style.overflow = shouldOpen ? "hidden" : "";
+  if (shouldOpen) $("help-close").focus();
+  else $("help-trigger").focus();
 }
 
 function downloadResult() {
@@ -329,11 +373,13 @@ $("folder-input").addEventListener("change", (event) => setFiles(event.target.fi
 $("remove-file").addEventListener("click", clearFiles);
 $("process-button").addEventListener("click", processImages);
 $("download-button").addEventListener("click", downloadResult);
-$("sample-method").addEventListener("change", (event) => $("sample-hint").textContent = hints[event.target.value]);
 $("auto-grid").addEventListener("change", (event) => {
   $("manual-grid").classList.toggle("hidden", event.target.checked);
   $("grid-mode-label").textContent = event.target.checked ? "自动" : "手动";
+  updateManualGridHint();
 });
+$("grid-width").addEventListener("input", updateManualGridHint);
+$("grid-height").addEventListener("input", updateManualGridHint);
 $("refine").addEventListener("input", (event) => $("refine-value").textContent = Number(event.target.value).toFixed(2));
 $("export-scale").addEventListener("input", (event) => $("scale-value").textContent = `${event.target.value}×`);
 document.querySelectorAll(".view-tabs button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
@@ -353,6 +399,19 @@ $("canvas-wrap").addEventListener("dblclick", resetViewer);
 $("candidate-list").addEventListener("click", (event) => {
   const candidate = event.target.closest(".candidate-item");
   if (candidate) useCandidateGrid(candidate);
+});
+$("help-trigger").addEventListener("click", () => toggleHelp(true));
+$("help-close").addEventListener("click", () => toggleHelp(false));
+$("help-backdrop").addEventListener("click", () => toggleHelp(false));
+document.addEventListener("keydown", (event) => {
+  const target = event.target;
+  const editing = target instanceof HTMLTextAreaElement || target.isContentEditable;
+  if (!editing && event.key.toLowerCase() === "p") {
+    event.preventDefault();
+    toggleHelp();
+  } else if (event.key === "Escape" && !$("help-layer").classList.contains("hidden")) {
+    toggleHelp(false);
+  }
 });
 
 const dropzone = $("dropzone");

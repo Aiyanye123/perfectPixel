@@ -78,6 +78,45 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["diagnostics"]["sample_method"], "adaptive")
 
+    def test_manual_grid_supports_long_strip_over_512_cells(self):
+        rgb = np.zeros((1200, 80, 3), dtype=np.uint8)
+        success, encoded = cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        self.assertTrue(success)
+
+        response = self.client.post(
+            "/api/process",
+            data={
+                "image": (io.BytesIO(encoded.tobytes()), "strip.png"),
+                "sample_method": "center",
+                "backend": "auto",
+                "auto_grid": "false",
+                "grid_width": "40",
+                "grid_height": "600",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["diagnostics"]["output_width"], 40)
+        self.assertEqual(response.json["diagnostics"]["output_height"], 600)
+
+    def test_manual_grid_cannot_exceed_source_dimensions(self):
+        response = self.client.post(
+            "/api/process",
+            data={
+                "image": (io.BytesIO(self._transparent_png()), "small.png"),
+                "sample_method": "center",
+                "backend": "auto",
+                "auto_grid": "false",
+                "grid_width": "32",
+                "grid_height": "128",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("不能超过原图尺寸", response.json["error"])
+
     def test_transparent_png_preserves_alpha(self):
         transparent_png = self._transparent_png()
 

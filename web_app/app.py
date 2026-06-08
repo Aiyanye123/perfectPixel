@@ -16,6 +16,8 @@ from flask import Flask, jsonify, render_template, request, send_file
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_BATCH_BYTES = 300 * 1024 * 1024
 MAX_BATCH_FILES = 200
+MAX_GRID_AXIS = 4096
+MAX_OUTPUT_PIXELS = 1024 * 1024
 ALLOWED_SAMPLE_METHODS = {"adaptive", "center", "median", "majority"}
 ALLOWED_BACKENDS = {"auto", "opencv", "numpy"}
 
@@ -151,8 +153,8 @@ def _parse_options(form: Any) -> dict[str, Any]:
     grid_size = None
     if not auto_grid:
         grid_size = (
-            _bounded_int(form, "grid_width", 2, 512),
-            _bounded_int(form, "grid_height", 2, 512),
+            _bounded_int(form, "grid_width", 2, MAX_GRID_AXIS),
+            _bounded_int(form, "grid_height", 2, MAX_GRID_AXIS),
         )
 
     return {
@@ -240,6 +242,7 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
             best_candidate["grid_height"],
         )
 
+    _validate_grid_size(grid_size, rgb.shape[1], rgb.shape[0])
     x_coords, y_coords = backend.refine_grids(
         analysis_rgb, grid_size[0], grid_size[1], options["refine_intensity"]
     )
@@ -278,6 +281,19 @@ def _process_upload(uploaded: Any, options: dict[str, Any], include_overlay: boo
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         },
     }
+
+
+def _validate_grid_size(grid_size: tuple[int, int], image_width: int, image_height: int) -> None:
+    grid_width, grid_height = grid_size
+    if grid_width > image_width or grid_height > image_height:
+        raise ValueError(
+            f"网格尺寸 {grid_width} × {grid_height} 不能超过原图尺寸 "
+            f"{image_width} × {image_height}。"
+        )
+    if grid_width * grid_height > MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"输出网格最多包含 {MAX_OUTPUT_PIXELS:,} 个像素，请降低网格宽或高。"
+        )
 
 
 def _decode_color_and_alpha(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:

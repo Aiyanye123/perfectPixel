@@ -19,6 +19,7 @@
       </div>
       <div class="mast-actions">
         <span class="local-badge"><span></span>本地离线处理</span>
+        <button class="help-trigger" id="help-trigger" type="button">帮助 <kbd>P</kbd></button>
         <a href="https://github.com/theamusing/perfectPixel" target="_blank" rel="noreferrer">项目源码</a>
       </div>
     </header>
@@ -53,7 +54,6 @@
               <option value="median">中位数 · 更稳定</option>
               <option value="majority">主色聚类 · 抗噪点</option>
             </select>
-            <p id="sample-hint">降低格子边缘混色权重，并抑制异常颜色，适合模糊和抗锯齿图片。</p>
           </div>
 
           <div class="field">
@@ -63,9 +63,9 @@
               <input id="auto-grid" type="checkbox" checked><i></i>
             </label>
             <div class="grid-pair hidden" id="manual-grid">
-              <label>宽<input id="grid-width" type="number" min="2" max="512" value="32"></label>
+              <label>宽<input id="grid-width" type="number" min="2" max="4096" value="32"></label>
               <span>×</span>
-              <label>高<input id="grid-height" type="number" min="2" max="512" value="32"></label>
+              <label>高<input id="grid-height" type="number" min="2" max="4096" value="32"></label>
             </div>
           </div>
 
@@ -118,17 +118,14 @@
             <div class="empty-state" id="empty-state">
               <span class="empty-pixels"><i></i><i></i><i></i><i></i><i></i></span>
               <strong>等待像素风图片</strong>
-              <p>可导入单张图片，也可选择整个文件夹批量修复。</p>
             </div>
             <div class="viewport-content hidden" id="viewport-content">
               <img id="preview-image" alt="图片预览" draggable="false">
             </div>
-            <small class="viewer-hint hidden" id="viewer-hint">滚轮缩放 · 拖拽移动 · 双击复位</small>
-            <div class="loading hidden" id="loading"><span></span><strong>正在识别网格</strong><small>正在比较候选网格与重渲染结果...</small></div>
+            <div class="loading hidden" id="loading"><span></span><strong>正在识别网格</strong></div>
             <div class="batch-status hidden" id="batch-status">
               <strong id="batch-title">批量处理完成</strong>
               <p id="batch-summary"></p>
-              <small>压缩包内包含修复后的 PNG 与处理报告。</small>
             </div>
           </div>
 
@@ -136,7 +133,6 @@
             <div class="export-scale">
               <div><label for="export-scale">导出倍率</label><output id="scale-value">8×</output></div>
               <input id="export-scale" type="range" min="1" max="16" value="8">
-              <small>仅放大下载尺寸，不改变像素内容；使用最近邻缩放，保持边缘锐利。</small>
             </div>
             <button id="download-button" type="button" disabled>下载 PNG <span>↓</span></button>
           </div>
@@ -146,7 +142,6 @@
       <section class="diagnostics">
         <div class="diagnostics-head">
           <div><p class="eyebrow">ANALYSIS / 03</p><h2>检测判断</h2></div>
-          <p id="diagnostic-summary">处理后可查看自动选择、可信度与备选网格。</p>
         </div>
         <div class="diagnostic-layout">
           <article class="decision-panel">
@@ -162,12 +157,11 @@
               </div>
             </div>
             <div class="confidence-track" aria-hidden="true"><i id="confidence-bar"></i></div>
-            <p id="confidence-note">系统会比较多个可能网格，再选择能够较好解释原图的结果。</p>
           </article>
           <div class="candidate-panel">
-            <div class="candidate-head"><span>候选排序</span><small>点击候选可重新修复</small></div>
+            <div class="candidate-head"><span>候选排序</span></div>
             <div class="candidate-list" id="candidate-list">
-              <div class="candidate-empty">处理图片后显示 Top-3 候选</div>
+              <div class="candidate-empty">—</div>
             </div>
           </div>
         </div>
@@ -179,6 +173,24 @@
       </section>
     </main>
     <footer><span>PerfectPixel Studio · Local Edition</span><span>图片不会离开此设备</span></footer>
+  </div>
+  <div class="help-layer hidden" id="help-layer" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <button class="help-backdrop" id="help-backdrop" type="button" aria-label="关闭帮助"></button>
+    <section class="help-panel">
+      <header>
+        <div><span>HELP / P</span><h2 id="help-title">使用帮助</h2></div>
+        <button id="help-close" type="button" aria-label="关闭帮助">×</button>
+      </header>
+      <div class="help-grid">
+        <article><span>颜色采样</span><p><strong>边界感知</strong>适合模糊与抗锯齿图；<strong>中心采样</strong>最锐利；<strong>中位数</strong>更稳定；<strong>主色聚类</strong>适合压缩噪点。</p></article>
+        <article><span>网格尺寸</span><p>手动宽高表示整张图片最终输出的像素列数与行数。原图中的单个格子越接近正方形，结果通常越可靠。</p><output id="help-grid-status">当前使用自动识别。</output></article>
+        <article><span>预览操作</span><p>滚轮缩放，按住拖拽移动，双击或点击“适应画布”复位。</p></article>
+        <article><span>导出倍率</span><p>只放大下载尺寸，不增加像素细节。使用最近邻缩放保持边缘锐利。</p></article>
+        <article><span>检测判断</span><p>自动模式会比较候选网格。可信度较低时，可查看网格叠加或点击候选重新处理。</p></article>
+        <article><span>批量处理</span><p>选择文件夹后，每张图片独立处理，结果和报告会打包为 ZIP。</p></article>
+      </div>
+      <footer>按 <kbd>P</kbd> 或 <kbd>Esc</kbd> 关闭</footer>
+    </section>
   </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
